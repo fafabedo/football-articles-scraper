@@ -44,8 +44,10 @@ class ScraperClass {
           this.token = res.data.jwt;
           resolve(res);
         })
-        .catch((err) => {
-          reject(err);
+        .catch((error) => {
+          console.log(error.message);
+          console.log(error.config.method, error.config.url, error.config.data);
+          reject(error);
         });
     });
   }
@@ -57,14 +59,16 @@ class ScraperClass {
             .get(this.getScrapersUrl(), {
               headers: this.getAuthHeader(),
               params: {
-                enabled: true
-              }
+                enabled: true,
+              },
             })
             .then((res) => {
               resolve(res.data);
             })
-            .catch((err) => {
-              reject(err);
+            .catch((error) => {
+              console.log(error.message);
+              console.log(error.config.method, error.config.url, error.config.data);
+              reject(error);
             });
         })
         .catch((err) => {

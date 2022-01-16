@@ -11,11 +11,11 @@ class ScraperClass {
     this.browser = browser;
     return this;
   }
-  getLinkSelector() {
-    return this.scraper.selectors.find((selector) => selector.id === `link`);
+  getLinkSelector(scraper) {
+    return scraper.selectors.find((selector) => selector.id === `link`);
   }
-  limitResults(items) {
-    const limit = this.scraper.limit || 20;
+  limitResults(items, scraper) {
+    const limit = scraper.limit || 20;
     return items.slice(0, limit);
   }
   getSelector(name, scraper) {
@@ -42,39 +42,59 @@ class ScraperClass {
       console.log(`Scraper Detail URL: ${url}`);
       let page = await this.browser.newPage();
       await page.goto(url);
-      await page.waitForTimeout(900);
+      await page.waitForSelector('body');
       let article = {
         uuid: url,
         locale: scraper.locale,
       };
+      if (scraper.tags) {
+        article.tags = scraper.tags;
+      }
       const titleSelector = this.getSelector(`title`, scraper);
       if (titleSelector) {
-        article.title = await page.$eval(
-          titleSelector.selector,
-          (element) => element.content
-        );
+        try {
+          article.title = await page.$eval(
+            titleSelector.selector,
+            (element) => element.content
+          );
+        } catch (err) {
+          article.title = null;
+        }
       }
       const bodySelector = this.getSelector(`body`, scraper);
       if (bodySelector) {
-        article.body = await page.$eval(
-          bodySelector.selector,
-          (element) => element.content
-        );
-        article.summary = article.body;
+        try {
+          article.body = await page.$eval(
+            bodySelector.selector,
+            (element) => element.content
+          );
+          article.summary = article.body;
+        } catch (err) {
+          article.body = null;
+          article.summary = null;
+        }
       }
       const imageSelector = this.getSelector(`image`, scraper);
       if (imageSelector) {
-        article.media_upload = await page.$eval(
-          imageSelector.selector,
-          (element) => element.content
-        );
+        try {
+          article.media_upload = await page.$eval(
+            imageSelector.selector,
+            (element) => element.content
+          );
+        } catch (err) {
+          article.media_upload = null;
+        }
       }
       const dateSelector = this.getSelector(`date`, scraper);
       if (dateSelector) {
-        article.date = await page.$eval(
-          dateSelector.selector,
-          (element) => element.content
-        );
+        try {
+          article.date = await page.$eval(
+            dateSelector.selector,
+            (element) => element.content
+          );
+        } catch (err) {
+          article.date = null;
+        }
       }
       const sourceSelector = this.getSelector(`source`, scraper);
       if (sourceSelector) {
@@ -83,17 +103,26 @@ class ScraperClass {
       page.close();
       return article;
     } catch (err) {
-      console.error("scrape Article Page", err);
-      throw new EvalError(err);
+      console.error("Scrape Article Page", err);
+      return null;
     }
   }
   async scrapeAllArticlePages(urls, scraper) {
-    return Promise.all(urls.map((url) => this.scrapeArticlePage(url, scraper)));
+    return new Promise((resolve, reject) => {
+      Promise.all(urls.map((url) => this.scrapeArticlePage(url, scraper)))
+      .then((res) => {
+        resolve(res)
+      })
+      .catch((error) => {
+        reject(error);
+      })
+    })
+    return 
   }
-  async getLinks(page) {
+  async getLinks(page, scraper) {
     return new Promise(async (resolve, reject) => {
       try {
-        const linkSelector = this.getLinkSelector();
+        const linkSelector = this.getLinkSelector(scraper);
         let urls = await page.$$eval(linkSelector.selector, (links) => {
           links = links.map((el) => el.href);
           return links;
@@ -111,18 +140,17 @@ class ScraperClass {
         console.log(`Scraper Root URL: ${url}`);
         let page = await this.browser.newPage();
         await page.goto(url);
-        await page.waitForTimeout(800);
-        this.getLinks(page)
+        await page.waitForSelector('body');
+        this.getLinks(page, scraper)
           .then((links) => {
-            let linksToProcess = this.limitResults(links);
+            let linksToProcess = this.limitResults(links, scraper);
             this.scrapeAllArticlePages(linksToProcess, scraper)
-              .then((res) => {
-                page.close();
+              .then(async (res) => {
+                await page.close();
                 let articles = [];
                 res.forEach((item) => {
                   articles.push(item);
                 });
-                // this.closeBrowser();
                 resolve(articles);
               })
               .catch((err) => {
@@ -140,7 +168,6 @@ class ScraperClass {
   }
   async scrapeAllPaths(scraper) {
     return new Promise((resolve, reject) => {
-      this.scraper = scraper;
       Promise.all(scraper.paths.map((url) => this.scrapeLinks(url, scraper)))
         .then((res) => {
           resolve(res);
@@ -153,31 +180,35 @@ class ScraperClass {
   async executeScraper(scraper, browser, articleManager) {
     return new Promise((resolve, reject) => {
       this.setBrowser(browser)
-      .scrapeAllPaths(scraper)
-      .then((res) => {
-        const articles = this.sanitizeResults(res);
-        if (articles) {
-          articleManager
-            .processAllArticles(articles)
-            .then((res) => {
-              resolve(res);
-            })
-            .catch((err) => {
-              throw new EvalError(err);
-            });
-        } else {
-          console.log(`Nothing imported`);
-          resolve(res)
-        }
-      })
-      .catch((err) => {
-        reject(err)
-      });
-    })    
+        .scrapeAllPaths(scraper)
+        .then((res) => {
+          const articles = this.sanitizeResults(res);
+          if (articles) {
+            articleManager
+              .processAllArticles(articles)
+              .then((res) => {
+                resolve(res);
+              })
+              .catch((err) => {
+                throw new EvalError(err);
+              });
+          } else {
+            console.log(`Nothing imported`);
+            resolve([]);
+          }
+        })
+        .catch((err) => {
+          reject(err);
+        });
+    });
   }
   async execute(scrapers, browser, articleManager) {
     return new Promise((resolve, reject) => {
-      Promise.all(scrapers.map((scraper) => this.executeScraper(scraper, browser, articleManager)))
+      Promise.all(
+        scrapers.map((scraper) =>
+          this.executeScraper(scraper, browser, articleManager)
+        )
+      )
         .then((res) => {
           resolve(res);
         })
